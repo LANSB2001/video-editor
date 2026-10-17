@@ -2,6 +2,8 @@
 
 A layer-based desktop video editor for Windows (also runs on macOS and Linux), with templates and an AI editing assistant. It aims to be easy for everyone: drag things around on the canvas, pick a template, or just type what you want changed.
 
+![Editor](docs/screenshot-editor.png)
+
 > Status: **v0.1, working MVP.** You can import, edit, save, reopen and export real MP4s. AI object removal inside footage is on the roadmap and not built yet; see the bottom of this file.
 
 ## What it does today
