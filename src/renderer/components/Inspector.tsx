@@ -4,6 +4,7 @@ import {
   type AnimationKind, type Clip, type EditCommand, type Region, type RegionKind, type Track,
 } from '../../engine';
 import { useEditor } from '../store';
+import { ObjectTools } from './ObjectTools';
 import { CLIP_COLORS } from '../util';
 
 const FONTS = ['Inter, Segoe UI, Arial, sans-serif', 'Arial', 'Arial Black', 'Impact', 'Georgia', 'Times New Roman', 'Trebuchet MS', 'Verdana', 'Courier New', 'Comic Sans MS'];
@@ -303,6 +304,7 @@ function ClipProperties({ clip, locked }: { clip: Clip; locked: boolean }) {
           </div>
         )}
 
+        {clip.type === 'video' && !locked && <ObjectTools clip={clip} />}
         {(clip.type === 'video' || clip.type === 'image') && <RegionsGroup clip={clip} />}
 
         {(clip.type === 'video' || clip.type === 'image') && (

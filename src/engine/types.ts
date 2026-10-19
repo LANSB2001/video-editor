@@ -16,6 +16,10 @@ export interface MediaAsset {
   width: number;
   height: number;
   hasAudio: boolean;
+  /** Video frame rate (0 for images/audio). */
+  fps?: number;
+  /** Video has an alpha channel (VP9 WebM cut-outs). */
+  hasAlpha?: boolean;
 }
 
 export type ClipType = 'video' | 'image' | 'text' | 'shape' | 'audio';

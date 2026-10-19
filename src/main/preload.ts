@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { DesktopApi, ExportProgress } from '../shared/api';
+import type { DesktopApi, ExportProgress, VisionProgress } from '../shared/api';
 
 const api: DesktopApi = {
   platform: process.platform,
@@ -25,6 +25,20 @@ const api: DesktopApi = {
     const h = (_: unknown, action: string) => cb(action);
     ipcRenderer.on('menu', h);
     return () => ipcRenderer.off('menu', h);
+  },
+  vision: {
+    begin: (req) => ipcRenderer.invoke('vision:begin', req),
+    select: (id, t, points) => ipcRenderer.invoke('vision:select', id, t, points),
+    track: (id) => ipcRenderer.invoke('vision:track', id),
+    maskAt: (id, t) => ipcRenderer.invoke('vision:maskAt', id, t),
+    apply: (id, action) => ipcRenderer.invoke('vision:apply', id, action),
+    cancel: (id) => ipcRenderer.invoke('vision:cancel', id),
+    end: (id) => ipcRenderer.invoke('vision:end', id),
+    onProgress: (cb) => {
+      const h = (_: unknown, p: VisionProgress) => cb(p);
+      ipcRenderer.on('vision:progress', h);
+      return () => ipcRenderer.off('vision:progress', h);
+    },
   },
 };
 

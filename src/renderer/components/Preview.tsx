@@ -46,6 +46,9 @@ export function Preview() {
   const drag = useRef<Drag | null>(null);
   const regionDrag = useRef<RegionDrag | null>(null);
   const selectedRegionId = useEditor((s) => s.selectedRegionId);
+  const overlay = useEditor((s) => s.objectOverlay);
+  const pickMode = useEditor((s) => s.pickMode);
+  const overlayRef = useRef<HTMLCanvasElement>(null);
   const { width: W, height: H } = project.settings;
 
   // Fit the canvas into the available area.
@@ -116,9 +119,43 @@ export function Preview() {
   const selClip = selected && selected.clip.type !== 'audio' ? selected.clip : undefined;
   const selVisible = selClip && time >= selClip.start && time < selClip.start + selClip.duration && !selected!.track.hidden;
 
+  // Draw the AI selection as a tinted overlay with the clip's own resolution.
+  useEffect(() => {
+    const c = overlayRef.current;
+    if (!c || !overlay) return;
+    c.width = overlay.width;
+    c.height = overlay.height;
+    const ctx = c.getContext('2d')!;
+    const img = ctx.createImageData(overlay.width, overlay.height);
+    const m = overlay.mask, w = overlay.width;
+    for (let p = 0; p < m.length; p++) {
+      if (!m[p]) continue;
+      // Brighter outline where a neighbour is outside the mask.
+      const edge = !m[p - 1] || !m[p + 1] || !m[p - w] || !m[p + w];
+      img.data[p * 4] = edge ? 255 : 157;
+      img.data[p * 4 + 1] = edge ? 255 : 120;
+      img.data[p * 4 + 2] = 255;
+      img.data[p * 4 + 3] = edge ? 255 : 120;
+    }
+    ctx.putImageData(img, 0, 0);
+  }, [overlay]);
+
   function onPointerDown(e: React.PointerEvent) {
-    if (e.button !== 0) return;
     const pt = toProject(e);
+    if (pickMode && selClip?.id === pickMode.clipId) {
+      // Point picking for AI selection: left click = object, Alt/right click = not the object.
+      const t = selClip.transform;
+      const a = (-t.rotation * Math.PI) / 180;
+      const dx = pt.x - (t.x + t.width / 2), dy = pt.y - (t.y + t.height / 2);
+      const lx = dx * Math.cos(a) - dy * Math.sin(a), ly = dx * Math.sin(a) + dy * Math.cos(a);
+      const nx = lx / t.width + 0.5, ny = ly / t.height + 0.5;
+      if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1) {
+        e.preventDefault();
+        pickMode.onPick(nx, ny, e.button === 2 || e.altKey ? 0 : 1);
+      }
+      return;
+    }
+    if (e.button !== 0) return;
     const regionEl = (e.target as HTMLElement).closest<HTMLElement>('[data-region]');
     if (regionEl && selClip && !selected!.track.locked) {
       const region = selClip.regions?.find((r) => r.id === regionEl.dataset.region);
@@ -253,6 +290,8 @@ export function Preview() {
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
+          onContextMenu={(e) => pickMode && e.preventDefault()}
+          data-picking={pickMode && selClip?.id === pickMode.clipId ? '' : undefined}
         >
           <canvas ref={canvasRef} width={Math.round(cssW * dpr)} height={Math.round(cssH * dpr)} style={{ width: cssW, height: cssH }} />
           {guides.v !== undefined && <div className="guide v" style={{ left: guides.v * scale }} />}
@@ -268,6 +307,7 @@ export function Preview() {
                 transform: `rotate(${t.rotation}deg)`,
               }}
             >
+              {overlay && overlay.clipId === selClip.id && <canvas ref={overlayRef} className="object-overlay" />}
               {selClip.regions?.map((rg) => (
                 <div
                   key={rg.id}

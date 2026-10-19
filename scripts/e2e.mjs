@@ -7,7 +7,8 @@
 // On Linux CI run it under xvfb-run. Screenshots are written to outDir.
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, existsSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, existsSync, statSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { _electron as electron } from 'playwright';
@@ -28,15 +29,24 @@ if (!existsSync(video)) {
     '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', video]);
   execFileSync(ffmpeg, ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=0xff9500:s=300x300,drawbox=x=60:y=60:w=180:h=180:color=white:t=fill', '-frames:v', '1', logo]);
 }
+// A red ball moving over a detailed still background (for the AI object tools).
+const ball = path.join(out, 'ball.mp4');
+if (!existsSync(ball)) {
+  execFileSync(ffmpeg, ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'mandelbrot=s=640x360:end_pts=1:start_scale=0.5', '-frames:v', '1', path.join(out, 'bg.png')]);
+  execFileSync(ffmpeg, ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', "color=c=black@0:s=90x90,format=rgba,geq=r='200':g='30':b='30':a='if(lte(hypot(X-45\\,Y-45)\\,42)\\,255\\,0)'", '-frames:v', '1', path.join(out, 'ballsprite.png')]);
+  execFileSync(ffmpeg, ['-y', '-loglevel', 'error', '-loop', '1', '-i', path.join(out, 'bg.png'), '-loop', '1', '-i', path.join(out, 'ballsprite.png'), '-filter_complex',
+    "[0]fps=30,format=yuv420p[b];[b][1]overlay=x='60+t*110':y='130+40*sin(t*2)':shortest=1,format=yuv420p", '-t', '3', '-c:v', 'libx264', '-crf', '14', ball]);
+}
 const projectFile = path.join(out, 'e2e.oneproj');
 const exportFile = path.join(out, 'e2e-export.mp4');
 
-const app = await electron.launch({ args: ['.', '--no-sandbox'], env: { ...process.env, ANTHROPIC_API_KEY: '' } });
+const profile = mkdtempSync(path.join(os.tmpdir(), 'one-e2e-profile-'));
+const app = await electron.launch({ args: ['.', '--no-sandbox'], env: { ...process.env, ANTHROPIC_API_KEY: '', ONE_USER_DATA: profile } });
 // Stub native dialogs.
 await app.evaluate(({ dialog }, files) => {
   dialog.showOpenDialog = async (_w, opts) => ({
     canceled: false,
-    filePaths: opts?.filters?.[0]?.extensions?.includes('oneproj') ? [files.projectFile] : [files.video, files.logo],
+    filePaths: opts?.filters?.[0]?.extensions?.includes('oneproj') ? [files.projectFile] : files.next ?? [files.video, files.logo],
   });
   dialog.showSaveDialog = async (_w, opts) => ({
     canceled: false,
@@ -194,6 +204,67 @@ await page.waitForTimeout(500);
 await page.locator('.ruler').click({ position: { x: 170 + 80 * 3, y: 10 } });
 await page.waitForTimeout(300);
 await shot(page, '06-template-loaded');
+
+step('AI object tools: select the ball, follow it, move it');
+await app.evaluate((_, b) => { globalThis.__ball = b; }, ball);
+await app.evaluate(({ dialog }, b) => {
+  const orig = dialog.showOpenDialog;
+  dialog.showOpenDialog = async (w, opts) => (opts?.filters?.[0]?.extensions?.includes('mp4') ? { canceled: false, filePaths: [b] } : orig(w, opts));
+}, ball);
+page.once('dialog', (d) => d.accept());
+await page.click('.menu-buttons >> text=New');
+await page.click('.sidebar-tabs >> text=Media');
+await page.click('text=＋ Import video, image or audio');
+await page.locator('.media-item').filter({ hasText: 'ball.mp4' }).locator('text=Add').click();
+await page.locator('.ruler').click({ position: { x: 170 + 80 * 1, y: 10 } }); // playhead to 1s
+await page.click('text=✦ Select an object');
+await page.waitForSelector('text=Click the object on the canvas', { timeout: 120000 });
+const cv = await page.locator('.canvas-wrap canvas').first().boundingBox();
+// At t=1s the ball centre is at (215, 210) of 640×360.
+await page.mouse.click(cv.x + cv.width * (215 / 640), cv.y + cv.height * (210 / 360));
+await page.waitForSelector('.object-overlay', { timeout: 60000 });
+await shot(page, '08-ai-selected');
+await page.getByRole('button', { name: 'Follow through clip →' }).click();
+await page.waitForSelector('text=Found in the whole clip', { timeout: 300000 });
+await page.getByRole('button', { name: 'Move object', exact: true }).click();
+await page.waitForFunction(() => document.querySelector('.ai-tools .warn')
+  || [...document.querySelectorAll('.clip')].some((c) => c.textContent.includes('cut-out')), null, { timeout: 300000 })
+  .catch(async (e) => { await shot(page, 'fail-move'); throw e; });
+const aiWarn = await page.locator('.ai-tools .warn').textContent().catch(() => null);
+if (aiWarn) { await shot(page, 'fail-move'); throw new Error(`Move object failed: ${aiWarn}`); }
+const names = await page.locator('.clip').allTextContents();
+if (!names.some((n) => n.includes('object removed')) || !names.some((n) => n.includes('cut-out'))) throw new Error(`unexpected clips: ${names}`);
+// Drag the cut-out ball 300 screen px to the right.
+await page.waitForTimeout(1500);
+const ballX = cv.x + cv.width * (215 / 640), ballY = cv.y + cv.height * (210 / 360);
+await page.mouse.move(ballX, ballY);
+await page.mouse.down();
+await page.mouse.move(ballX + 300, ballY, { steps: 10 });
+await page.mouse.up();
+await page.waitForTimeout(800);
+const sample = async (x, y) => page.evaluate(({ x, y }) => {
+  const c = document.querySelector('.canvas-wrap canvas');
+  const r = c.getBoundingClientRect();
+  const k = c.width / r.width;
+  return [...c.getContext('2d').getImageData(Math.round((x - r.left) * k), Math.round((y - r.top) * k), 1, 1).data];
+}, { x, y });
+const oldSpot = await sample(ballX, ballY), newSpot = await sample(ballX + 300, ballY);
+const isRed = (p) => p[0] > 150 && p[1] < 80 && p[2] < 80;
+if (isRed(oldSpot)) throw new Error(`ball still visible at its old place: ${oldSpot}`);
+if (!isRed(newSpot)) throw new Error(`ball not at its new place: ${newSpot}`);
+await page.click('.ruler', { position: { x: 5, y: 10 } });
+await page.waitForTimeout(500);
+await shot(page, '09-ai-moved');
+
+step('export the moved-ball video');
+await page.click('text=⬇ Export video');
+await page.selectOption('.modal select', 'draft');
+await app.evaluate(({ dialog }, f) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: f }); }, path.join(out, 'e2e-moved.mp4'));
+await page.click('.modal >> button.primary');
+await page.waitForSelector('.export-status .ok, .export-status .error', { timeout: 180000 });
+const err2 = await page.locator('.export-status .error').textContent().catch(() => null);
+if (err2) throw new Error(`export failed: ${err2}`);
+execFileSync(ffmpeg, ['-y', '-loglevel', 'error', '-ss', '1', '-i', path.join(out, 'e2e-moved.mp4'), '-frames:v', '1', path.join(out, '10-moved-export-frame.png')]);
 
 await app.close();
 

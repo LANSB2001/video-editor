@@ -9,7 +9,7 @@ const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']);
 const AUDIO_EXT = new Set(['.mp3', '.wav', '.aac', '.m4a', '.ogg', '.flac']);
 export const MEDIA_EXTENSIONS = ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v', ...[...IMAGE_EXT, ...AUDIO_EXT].map((e) => e.slice(1))];
 
-interface ProbeStream { codec_type: string; width?: number; height?: number; tags?: { rotate?: string }; side_data_list?: { rotation?: number }[] }
+interface ProbeStream { codec_type: string; width?: number; height?: number; avg_frame_rate?: string; r_frame_rate?: string; tags?: { rotate?: string; alpha_mode?: string; ALPHA_MODE?: string }; side_data_list?: { rotation?: number }[] }
 
 function run(cmd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) =>
@@ -43,7 +43,16 @@ export async function probe(file: string): Promise<MediaAsset> {
     width: kind === 'audio' ? 0 : width,
     height: kind === 'audio' ? 0 : height,
     hasAudio: !!audio,
+    fps: kind === 'video' ? parseRate(video?.avg_frame_rate) || parseRate(video?.r_frame_rate) || 30 : 0,
+    hasAlpha: kind === 'video' && (video?.tags?.alpha_mode === '1' || video?.tags?.ALPHA_MODE === '1'),
   };
+}
+
+function parseRate(r?: string): number {
+  if (!r) return 0;
+  const [n, d] = r.split('/').map(Number);
+  const v = d ? n / d : n;
+  return Number.isFinite(v) && v > 0 && v < 240 ? Math.round(v * 1000) / 1000 : 0;
 }
 
 const MIME: Record<string, string> = {

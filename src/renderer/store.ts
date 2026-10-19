@@ -11,6 +11,21 @@ import {
 
 const history = new History();
 
+/** AI object selection shown over a clip on the canvas. */
+export interface ObjectOverlay {
+  clipId: string;
+  mask: Uint8Array;
+  width: number;
+  height: number;
+}
+
+/** While set, clicks on this clip in the canvas pick points instead of moving it. */
+export interface PickMode {
+  clipId: string;
+  /** nx, ny: 0..1 within the clip frame; label 1 = object, 0 = not the object. */
+  onPick: (nx: number, ny: number, label: 0 | 1) => void;
+}
+
 export interface Toast {
   id: number;
   kind: 'info' | 'error';
@@ -30,6 +45,10 @@ interface EditorState {
   canUndo: boolean;
   canRedo: boolean;
   toasts: Toast[];
+  objectOverlay: ObjectOverlay | null;
+  pickMode: PickMode | null;
+  setObjectOverlay: (o: ObjectOverlay | null) => void;
+  setPickMode: (p: PickMode | null) => void;
 
   /** Apply one or more edits as a single undo step. Returns false on error. */
   dispatch: (cmds: EditCommand | EditCommand[], opts?: { merge?: boolean }) => boolean;
@@ -63,6 +82,10 @@ export const useEditor = create<EditorState>((set, get) => ({
   canUndo: false,
   canRedo: false,
   toasts: [],
+  objectOverlay: null,
+  pickMode: null,
+  setObjectOverlay: (objectOverlay) => set({ objectOverlay }),
+  setPickMode: (pickMode) => set({ pickMode }),
 
   dispatch: (cmds, opts) => {
     const list = Array.isArray(cmds) ? cmds : [cmds];

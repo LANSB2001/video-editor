@@ -7,7 +7,7 @@ const common = {
   target: 'node20',
   format: 'cjs',
   sourcemap: true,
-  external: ['electron', 'ffmpeg-static', 'ffprobe-static'],
+  external: ['electron', 'ffmpeg-static', 'ffprobe-static', 'onnxruntime-node'],
 };
 
 await build({ ...common, entryPoints: ['src/main/main.ts'], outfile: 'dist/main/main.js' });

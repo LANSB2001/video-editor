@@ -14,6 +14,7 @@ A layer-based desktop video editor for Windows (also runs on macOS and Linux), w
 | **Layers** | Every element is its own layer · show/hide · lock · reorder (drag or ▲▼) · rename |
 | **Timeline** | Multiple video/image/text/shape layers and audio tracks · drag clips in time and between tracks · trim both ends · split at playhead (S) · duplicate · snapping to the playhead and clip edges · zoom |
 | **Elements** | Video, images/logos, audio, text (font, size, bold/italic, alignment, colour, highlight box), shapes (rectangle, rounded, circle, frame, line, lower bar) |
+| **AI object tools** | Click an object in a video (person, product, phone, car…) and the AI outlines it and follows it through the clip. Then **Remove** it (background rebuilt from other frames), **Move** it (cut out onto its own draggable layer and fill the hole), **Cut out** a copy, or **Blur/Pixelate** it so the effect follows it. Runs free and offline on an ordinary laptop's CPU (MobileSAM) |
 | **Fix areas** | Draw a box on a video or image to **remove** a logo or watermark (filled in from the surrounding pixels), **blur** a face or number plate, or **pixelate** it. Boxes stick to the clip when it moves, can apply to the whole clip or a time range, and show live in the preview |
 | **Motion & colour** | In/out animations (fade, slide up/down/left/right) · brightness/contrast/saturation · opacity · volume |
 | **Templates** | Product Launch, Mobile App Promo, Instagram Reel (9:16), YouTube Intro, Property Showcase. All of them are editable layers, and their ＋ slots take your own media via *Replace media* |
@@ -59,6 +60,16 @@ npm run build && xvfb-run -a node scripts/e2e.mjs out/   # full desktop E2E (Lin
 
 The E2E script launches the real Electron app. It imports media, edits on the canvas and timeline, uses the AI assistant, splits, saves, reopens and exports, and writes screenshots to `out/`.
 
+### How the AI object tools work
+
+1. Frames of the selected clip section (up to 30 s) are decoded at ≤640 px, 10–15 fps.
+2. **MobileSAM** (`models/`, ONNX, run with `onnxruntime-node` on the CPU) turns your clicks into an outline.
+3. **Tracking** (`src/main/vision/track.ts`) prompts each next frame with the predicted box and an interior point. Outlines are clipped to where the object can plausibly be, and a size check with short "coasting" stops leaks into similar-looking background.
+4. **Fill** (`fill.ts`): each hidden pixel takes its value from the nearest frame where it's visible. Pixels that are never visible use a push-pull pyramid fill.
+5. FFmpeg composites the result at full resolution and frame rate into a **new video file** (originals are never changed; Ctrl+Z restores the old clip). Cut-outs are VP9 WebM with transparency.
+
+About 0.5 s per analysed frame on a 4-core CPU, so a 4 s clip takes roughly 30–40 s to track.
+
 ## Architecture
 
 ```
@@ -70,6 +81,7 @@ src/
     export.ts      Project → FFmpeg filter graph / command line
     templates.ts   Templates are just projects built from commands
     ai.ts          AI action schema, prompt, validation, offline parser
+  main/vision/   AI object tools: MobileSAM (ONNX), tracking, background fill, rendering
   main/          Electron main process: file dialogs, media:// protocol (range
                  requests for seeking), ffprobe import, FFmpeg export job, Claude API
   renderer/      React UI: canvas preview, timeline, layers, properties, AI chat
@@ -86,8 +98,9 @@ Key design decisions:
 ## Roadmap
 
 0. ✅ **Fix areas** (remove / blur / pixelate a rectangle over a time range), done.
-1. **AI object selection** (click an object in footage to get a tracked mask). Planned with SAM 2 (Apache-2.0), which turns a flattened MP4 object into a real layer.
-2. **Object removal / background fill**, using video inpainting. Check model licences: ProPainter, for example, is non-commercial.
+1. ✅ **AI object selection and tracking**, done (MobileSAM, Apache-2.0, on the CPU).
+2. ✅ **Object removal / move / cut-out / blur**, done. The background is rebuilt from other frames (works best with a still camera), with smooth fill for areas that are never uncovered.
+2b. Next: handle camera motion (align frames before filling), an optional AI inpainting model for large never-uncovered areas, and a faster "preview quality" mode.
 3. Background removal for people, auto-captions (speech-to-text), keyframe animation, transitions between clips, more templates, a GPU preview pipeline (WebCodecs / native decoder) for 4K timelines.
 
 ## Licensing note

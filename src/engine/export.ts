@@ -121,6 +121,8 @@ export function buildExportPlan(p: Project, opts: ExportOptions): ExportPlan {
       const idx = n++;
       if (clip.type === 'video' || clip.type === 'audio') {
         if (!media) throw new Error(`Missing media for "${clip.name}"`);
+        // FFmpeg's native VP9 decoder drops alpha; libvpx keeps it.
+        if (media.hasAlpha) inputs.push('-c:v', 'libvpx-vp9');
         inputs.push('-ss', r(clip.inPoint), '-t', r(clip.duration), '-i', media.path);
       } else {
         const src = needsRaster(clip) ? opts.rasters[clip.id] : media?.path;

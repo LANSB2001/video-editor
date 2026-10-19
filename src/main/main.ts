@@ -7,8 +7,14 @@ import { runAi } from './ai';
 import { ExportJob } from './exporter';
 import { MEDIA_EXTENSIONS, probe, serveMedia } from './media';
 import { getApiKey, getSettings, setApiKey } from './settings';
+import { ffmpegPath } from './binaries';
+import { VisionService } from './vision/session';
+import type { ObjectAction, VisionBegin } from '../shared/api';
 
 const PROJECT_EXT = 'oneproj';
+
+// Separate profile (settings, autosave, generated files), e.g. for automated tests.
+if (process.env.ONE_USER_DATA) app.setPath('userData', process.env.ONE_USER_DATA);
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'media', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true, corsEnabled: true } },
@@ -160,6 +166,23 @@ function registerIpc() {
   ipcMain.handle('settings:setApiKey', (_e, key: string) => setApiKey(key));
 }
 
+/** Bundled AI models: resources/models when packaged, ./models in development. */
+function modelDir() {
+  return process.env.ONE_MODEL_DIR ?? (app.isPackaged ? path.join(process.resourcesPath, 'models') : path.join(app.getAppPath(), 'models'));
+}
+
+function registerVisionIpc() {
+  const vision = new VisionService(modelDir(), ffmpegPath(), path.join(app.getPath('userData'), 'derived'),
+    (p) => win?.webContents.send('vision:progress', p));
+  ipcMain.handle('vision:begin', (_e, req: VisionBegin) => vision.begin(req));
+  ipcMain.handle('vision:select', (_e, id: string, t: number, points) => vision.select(id, t, points));
+  ipcMain.handle('vision:track', (_e, id: string) => vision.track(id));
+  ipcMain.handle('vision:maskAt', (_e, id: string, t: number) => vision.maskAt(id, t));
+  ipcMain.handle('vision:apply', async (_e, id: string, action: ObjectAction) => probe(await vision.apply(id, action)));
+  ipcMain.handle('vision:cancel', (_e, id: string) => vision.cancel(id));
+  ipcMain.handle('vision:end', (_e, id: string) => vision.end(id));
+}
+
 async function probeAll(paths: string[]) {
   const results = await Promise.allSettled(paths.map(probe));
   const failed = results.filter((r) => r.status === 'rejected');
@@ -176,6 +199,7 @@ async function probeAll(paths: string[]) {
 app.whenReady().then(() => {
   protocol.handle('media', serveMedia);
   registerIpc();
+  registerVisionIpc();
   buildMenu();
   createWindow();
   app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow());
