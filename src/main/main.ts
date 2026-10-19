@@ -5,7 +5,7 @@ import { normalizeProject, type Project } from '../engine';
 import type { AiRequest, ExportRequest } from '../shared/api';
 import { runAi } from './ai';
 import { ExportJob } from './exporter';
-import { MEDIA_EXTENSIONS, probe, serveMedia } from './media';
+import { detectScenes, MEDIA_EXTENSIONS, probe, serveMedia } from './media';
 import { getApiKey, getSettings, setApiKey } from './settings';
 import { ffmpegPath } from './binaries';
 import { VisionService } from './vision/session';
@@ -96,6 +96,7 @@ function registerIpc() {
   });
 
   ipcMain.handle('media:probe', (_e, paths: string[]) => probeAll(paths));
+  ipcMain.handle('media:scenes', (_e, file: string) => detectScenes(ffmpegPath(), file));
 
   ipcMain.handle('project:open', async () => {
     const r = await dialog.showOpenDialog(win!, {

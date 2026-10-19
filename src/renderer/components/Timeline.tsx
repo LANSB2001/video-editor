@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { clipEnd, findClip, getMedia, projectDuration, type Clip, type EditCommand } from '../../engine';
+import { clipEnd, findClip, getMedia, projectDuration, timelineTime, type Clip, type EditCommand } from '../../engine';
 import { useEditor } from '../store';
 import { CLIP_COLORS, formatTime } from '../util';
 
@@ -226,6 +226,12 @@ function ClipBlock(props: {
     >
       {!props.locked && <div className="trim l" onPointerDown={(e) => props.onDown?.(e, 'trim-l')} onPointerMove={props.onMove} onPointerUp={props.onUp} />}
       <span className="clip-label">{clip.placeholder ? '＋ ' : ''}{label}</span>
+      {clip.regions?.map((rg) => {
+        // When each area fix is active, as a bar along the bottom of the clip.
+        const a = rg.from === undefined ? 0 : Math.max(0, timelineTime(clip, rg.from) - clip.start);
+        const b = rg.to === undefined ? clip.duration : Math.min(clip.duration, timelineTime(clip, rg.to) - clip.start);
+        return b > a ? <span key={rg.id} className={`region-bar ${rg.kind}`} style={{ left: a * zoom, width: Math.max(2, (b - a) * zoom) }} title={`${rg.kind} area`} /> : null;
+      })}
       {!props.locked && <div className="trim r" onPointerDown={(e) => props.onDown?.(e, 'trim-r')} onPointerMove={props.onMove} onPointerUp={props.onUp} />}
     </div>
   );

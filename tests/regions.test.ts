@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { detectScenes, parseSceneTimes } from '../src/main/media';
 import { applyCommands, buildExportPlan, createProject, findClip, regionActiveAt, type EditCommand, type MediaAsset } from '../src/engine';
 
 const ffmpeg: string = process.env.ONE_FFMPEG ?? require('ffmpeg-static');
@@ -103,5 +104,22 @@ describe('area fixes', () => {
   it('rejects area fixes on text layers', () => {
     const p = applyCommands(createProject('t'), [{ type: 'addText', clipId: 't' }]);
     expect(() => applyCommands(p, [{ type: 'addRegion', clipId: 't', region: { kind: 'blur' } }])).toThrow();
+  });
+});
+
+describe('screen (scene) detection', () => {
+  it('finds the cuts between screens', async () => {
+    // Three 2-second "screens" with different content.
+    ff(['-f', 'lavfi', '-i', 'testsrc2=s=640x360:r=25:d=2', '-f', 'lavfi', '-i', 'mandelbrot=s=640x360:r=25',
+      '-f', 'lavfi', '-i', 'color=c=0x204080:s=640x360:r=25:d=2', '-filter_complex',
+      '[1]trim=duration=2,setpts=PTS-STARTPTS[m];[0][m][2]concat=n=3:v=1[v]', '-map', '[v]', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', f('screens.mp4')]);
+    const cuts = await detectScenes(ffmpeg, f('screens.mp4'));
+    expect(cuts.length).toBe(2);
+    expect(cuts[0]).toBeCloseTo(2, 1);
+    expect(cuts[1]).toBeCloseTo(4, 1);
+  }, 60000);
+
+  it('parses showinfo output', () => {
+    expect(parseSceneTimes('n:0 pts:1 pts_time:2.5 x\nn:1 pts_time:7.04 y')).toEqual([2.5, 7.04]);
   });
 });

@@ -6,6 +6,7 @@ const api: DesktopApi = {
   openMedia: () => ipcRenderer.invoke('media:open'),
   probeFiles: (files) => ipcRenderer.invoke('media:probe', files.map((f) => webUtils.getPathForFile(f)).filter(Boolean)),
   mediaUrl: (path) => `media://local/${encodeURIComponent(path)}`,
+  detectScenes: (path) => ipcRenderer.invoke('media:scenes', path),
   openProject: () => ipcRenderer.invoke('project:open'),
   saveProject: (project, path) => ipcRenderer.invoke('project:save', project, path),
   autosave: (project) => ipcRenderer.invoke('project:autosave', project),

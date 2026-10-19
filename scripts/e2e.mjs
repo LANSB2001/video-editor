@@ -37,6 +37,13 @@ if (!existsSync(ball)) {
   execFileSync(ffmpeg, ['-y', '-loglevel', 'error', '-loop', '1', '-i', path.join(out, 'bg.png'), '-loop', '1', '-i', path.join(out, 'ballsprite.png'), '-filter_complex',
     "[0]fps=30,format=yuv420p[b];[b][1]overlay=x='60+t*110':y='130+40*sin(t*2)':shortest=1,format=yuv420p", '-t', '3', '-c:v', 'libx264', '-crf', '14', ball]);
 }
+// Three 2-second "screens" (for "This screen only").
+const screens = path.join(out, 'screens.mp4');
+if (!existsSync(screens)) {
+  execFileSync(ffmpeg, ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=640x360:r=25:d=2', '-f', 'lavfi', '-i', 'mandelbrot=s=640x360:r=25',
+    '-f', 'lavfi', '-i', 'color=c=0x204080:s=640x360:r=25:d=2', '-filter_complex',
+    '[1]trim=duration=2,setpts=PTS-STARTPTS[m];[0][m][2]concat=n=3:v=1[v]', '-map', '[v]', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', screens]);
+}
 const projectFile = path.join(out, 'e2e.oneproj');
 const exportFile = path.join(out, 'e2e-export.mp4');
 
@@ -209,8 +216,8 @@ step('AI object tools: select the ball, follow it, move it');
 await app.evaluate((_, b) => { globalThis.__ball = b; }, ball);
 await app.evaluate(({ dialog }, b) => {
   const orig = dialog.showOpenDialog;
-  dialog.showOpenDialog = async (w, opts) => (opts?.filters?.[0]?.extensions?.includes('mp4') ? { canceled: false, filePaths: [b] } : orig(w, opts));
-}, ball);
+  dialog.showOpenDialog = async (w, opts) => (opts?.filters?.[0]?.extensions?.includes('mp4') ? { canceled: false, filePaths: b } : orig(w, opts));
+}, [ball, screens]);
 page.once('dialog', (d) => d.accept());
 await page.click('.menu-buttons >> text=New');
 await page.click('.sidebar-tabs >> text=Media');
@@ -257,6 +264,7 @@ await page.waitForTimeout(500);
 await shot(page, '09-ai-moved');
 
 step('export the moved-ball video');
+
 await page.click('text=⬇ Export video');
 await page.selectOption('.modal select', 'draft');
 await app.evaluate(({ dialog }, f) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: f }); }, path.join(out, 'e2e-moved.mp4'));
@@ -265,6 +273,20 @@ await page.waitForSelector('.export-status .ok, .export-status .error', { timeou
 const err2 = await page.locator('.export-status .error').textContent().catch(() => null);
 if (err2) throw new Error(`export failed: ${err2}`);
 execFileSync(ffmpeg, ['-y', '-loglevel', 'error', '-ss', '1', '-i', path.join(out, 'e2e-moved.mp4'), '-frames:v', '1', path.join(out, '10-moved-export-frame.png')]);
+
+await page.click('.modal >> text=Close');
+
+step('fix areas: "This screen only"');
+await page.click('.sidebar-tabs >> text=Media');
+await page.locator('.media-item').filter({ hasText: 'screens.mp4' }).locator('text=Add').click();
+await page.locator('.ruler').click({ position: { x: 170 + 80 * 3, y: 10 } }); // playhead in the 2nd screen
+await page.click('.region-add >> text=Remove');
+await page.click('text=▣ This screen only');
+await page.waitForSelector('.region-when:has-text("Active 0:02")', { timeout: 60000 }).catch(async (e) => { await shot(page, 'fail-screen'); throw e; });
+const when = await page.locator('.region-when').first().textContent();
+if (!/Active 0:02\.\d\d → 0:04\.\d\d/.test(when)) throw new Error(`unexpected screen range: ${when}`);
+if ((await page.locator('.region-bar').count()) < 1) throw new Error('no area bar on the timeline');
+await shot(page, '11-this-screen-only');
 
 await app.close();
 

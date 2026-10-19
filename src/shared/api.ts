@@ -73,6 +73,8 @@ export interface DesktopApi {
   openMedia(): Promise<MediaAsset[]>;
   probeFiles(files: File[]): Promise<MediaAsset[]>;
   mediaUrl(path: string): string;
+  /** Source times where the video cuts to a new screen (desktop only). */
+  detectScenes?(path: string): Promise<number[]>;
   openProject(): Promise<{ project: Project; path: string } | null>;
   saveProject(project: Project, path?: string): Promise<string | null>;
   autosave(project: Project): Promise<void>;

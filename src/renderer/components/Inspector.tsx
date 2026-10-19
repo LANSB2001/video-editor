@@ -5,7 +5,8 @@ import {
 } from '../../engine';
 import { useEditor } from '../store';
 import { ObjectTools } from './ObjectTools';
-import { CLIP_COLORS } from '../util';
+import { CLIP_COLORS, formatTime } from '../util';
+import { api } from '../platform';
 
 const FONTS = ['Inter, Segoe UI, Arial, sans-serif', 'Arial', 'Arial Black', 'Impact', 'Georgia', 'Times New Roman', 'Trebuchet MS', 'Verdana', 'Courier New', 'Comic Sans MS'];
 const ANIMS: { id: AnimationKind; label: string }[] = [
@@ -343,7 +344,7 @@ const REGION_KINDS: { id: RegionKind; label: string; hint: string }[] = [
 function RegionsGroup({ clip }: { clip: Clip }) {
   const selectedRegionId = useEditor((s) => s.selectedRegionId);
   const time = useEditor((s) => s.time);
-  const { dispatch, beginGesture, selectRegion } = useEditor.getState();
+  const { dispatch, beginGesture, selectRegion, toast } = useEditor.getState();
   const regions = clip.regions ?? [];
   const update = (r: Region, patch: Partial<Region>, merge = false) =>
     dispatch({ type: 'updateRegion', clipId: clip.id, regionId: r.id, patch }, { merge });
@@ -353,8 +354,35 @@ function RegionsGroup({ clip }: { clip: Clip }) {
     if (dispatch({ type: 'addRegion', clipId: clip.id, region: { id, kind } })) selectRegion(id);
   }
 
+  const project = useEditor((s) => s.project);
+  const media = getMedia(project, clip.mediaId);
+  const [finding, setFinding] = useState<string | null>(null);
+
   // Times are stored in source seconds; show them in timeline seconds.
   const toTimeline = (s: number) => timelineTime(clip, s);
+  const clipSrcStart = sourceTime(clip, clip.start), clipSrcEnd = sourceTime(clip, clip.start + clip.duration);
+
+  /** The screen (shot) under the playhead: between the scene cuts around it. */
+  async function thisScreen(r: Region) {
+    const at = playheadSource;
+    let from = clipSrcStart, to = clipSrcEnd;
+    if (api.detectScenes && media && clip.type === 'video') {
+      setFinding(r.id);
+      try {
+        const cuts = await api.detectScenes(media.path);
+        from = Math.max(clipSrcStart, ...cuts.filter((c) => c <= at + 1e-3), 0);
+        to = Math.min(clipSrcEnd, ...cuts.filter((c) => c > at + 1e-3));
+        if (!cuts.length) toast('No screen changes found in this video — the area applies from start to end. Use Start here / End here to adjust.');
+      } catch (e) {
+        toast(`Could not find screen changes: ${(e as Error).message}`, 'error');
+        return;
+      } finally {
+        setFinding(null);
+      }
+    }
+    beginGesture();
+    update(r, { from, to });
+  }
   const playheadSource = Math.min(Math.max(sourceTime(clip, time), sourceTime(clip, clip.start)), sourceTime(clip, clip.start + clip.duration));
 
   return (
@@ -375,9 +403,9 @@ function RegionsGroup({ clip }: { clip: Clip }) {
                 {REGION_KINDS.map((k) => <option key={k.id} value={k.id}>{k.label}</option>)}
               </select>
               <label className="check">
-                <input type="checkbox" checked={whole} onChange={(e) => update(r, e.target.checked
-                  ? { from: undefined, to: undefined }
-                  : { from: playheadSource, to: Math.min(playheadSource + 2, sourceTime(clip, clip.start + clip.duration)) })} />
+                <input type="checkbox" checked={whole} onChange={(e) => (e.target.checked
+                  ? update(r, { from: undefined, to: undefined })
+                  : thisScreen(r))} />
                 Whole clip
               </label>
               <button className="icon tiny" title="Delete area" onClick={(e) => { e.stopPropagation(); dispatch({ type: 'deleteRegion', clipId: clip.id, regionId: r.id }); }}>✕</button>
@@ -391,12 +419,15 @@ function RegionsGroup({ clip }: { clip: Clip }) {
                 <Num label="To" value={toTimeline(r.to ?? sourceTime(clip, clip.start + clip.duration))} step={0.1} suffix="s" onChange={(v) => update(r, { to: sourceTime(clip, v) }, true)} />
               </div>
             )}
-            {!whole && (
-              <div className="row small-actions">
-                <button className="tiny" onClick={() => { beginGesture(); update(r, { from: playheadSource }); }}>Start here</button>
-                <button className="tiny" onClick={() => { beginGesture(); update(r, { to: playheadSource }); }}>End here</button>
-              </div>
-            )}
+            <div className="row small-actions">
+              <button className="tiny" disabled={finding === r.id} title="Only while the screen under the playhead is showing"
+                onClick={(e) => { e.stopPropagation(); thisScreen(r); }}>{finding === r.id ? 'Finding screen…' : '▣ This screen only'}</button>
+              {!whole && <button className="tiny" onClick={() => { beginGesture(); update(r, { from: playheadSource }); }}>Start here</button>}
+              {!whole && <button className="tiny" onClick={() => { beginGesture(); update(r, { to: playheadSource }); }}>End here</button>}
+            </div>
+            <p className="hint region-when">
+              {whole ? 'Active for the whole clip' : `Active ${formatTime(toTimeline(r.from ?? clipSrcStart))} → ${formatTime(toTimeline(r.to ?? clipSrcEnd))}`}
+            </p>
           </div>
         );
       })}

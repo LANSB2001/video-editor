@@ -94,3 +94,31 @@ export async function serveMedia(request: Request): Promise<Response> {
   const body = Readable.toWeb(createReadStream(file)) as ReadableStream;
   return new Response(body, { headers: { 'Content-Type': type, 'Content-Length': String(stat.size), 'Accept-Ranges': 'bytes', ...CORS } });
 }
+
+const sceneCache = new Map<string, Promise<number[]>>();
+
+/**
+ * Times (seconds) where the video cuts to a new screen/shot, found with
+ * FFmpeg's scene-change score. Cached per file.
+ */
+export function detectScenes(ffmpeg: string, file: string, threshold = 0.3): Promise<number[]> {
+  const key = `${file}|${threshold}`;
+  let p = sceneCache.get(key);
+  if (!p) {
+    p = new Promise<number[]>((resolve, reject) => {
+      // Small frames are plenty for spotting cuts and much faster to analyse.
+      execFile(ffmpeg, ['-hide_banner', '-nostats', '-i', file, '-an', '-vf', `scale=320:-2,select='gt(scene,${threshold})',showinfo`, '-f', 'null', '-'],
+        { maxBuffer: 64 * 1024 * 1024 }, (err, _out, stderr) => {
+          if (err) return reject(new Error(stderr.split('\n').slice(-4).join('\n') || err.message));
+          resolve(parseSceneTimes(stderr));
+        });
+    });
+    p.catch(() => sceneCache.delete(key));
+    sceneCache.set(key, p);
+  }
+  return p;
+}
+
+export function parseSceneTimes(showinfo: string): number[] {
+  return [...showinfo.matchAll(/pts_time:\s*([\d.]+)/g)].map((m) => Number(m[1])).filter((t) => t > 0.05);
+}
