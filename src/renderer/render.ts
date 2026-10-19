@@ -1,7 +1,7 @@
 // Canvas drawing shared by the live preview, template thumbnails and export
 // rasterisation, so what the user sees is what gets rendered.
 
-import { animationAt, visibleClipsAt, type Clip, type Project } from '../engine';
+import { animationAt, blurSigma, pixelBlock, regionActiveAt, visibleClipsAt, type Clip, type Project, type Region } from '../engine';
 
 export type SourceLookup = (clip: Clip) => CanvasImageSource | null;
 
@@ -125,11 +125,99 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: Project, t: number, 
       }
     } else {
       const src = source(clip);
-      if (src) ctx.drawImage(src, 0, 0, tr.width, tr.height);
+      if (src) {
+        ctx.drawImage(src, 0, 0, tr.width, tr.height);
+        for (const rg of clip.regions ?? []) {
+          if (regionActiveAt(rg, clip, t)) drawRegion(ctx, rg, src, tr.width, tr.height);
+        }
+      }
     }
     ctx.restore();
   }
   ctx.restore();
+}
+
+function sourceSize(src: CanvasImageSource): [number, number] {
+  if (src instanceof HTMLVideoElement) return [src.videoWidth, src.videoHeight];
+  if (src instanceof HTMLImageElement) return [src.naturalWidth, src.naturalHeight];
+  const c = src as HTMLCanvasElement;
+  return [c.width, c.height];
+}
+
+let scratch: HTMLCanvasElement | null = null;
+function scratchCanvas(w: number, h: number) {
+  scratch ??= document.createElement('canvas');
+  scratch.width = w;
+  scratch.height = h;
+  return scratch;
+}
+
+/**
+ * Preview of an area fix, drawn over a clip already painted into a w×h box.
+ * Mirrors the exporter: remove ≈ FFmpeg delogo (interpolate from the border),
+ * blur ≈ gblur, pixelate = downscale + nearest-neighbour upscale.
+ */
+function drawRegion(ctx: CanvasRenderingContext2D, rg: Region, src: CanvasImageSource, w: number, h: number) {
+  const [sw, sh] = sourceSize(src);
+  if (!sw || !sh) return;
+  const rx = rg.x * w, ry = rg.y * h, rw = rg.width * w, rh = rg.height * h;
+  const sx = rg.x * sw, sy = rg.y * sh, srw = rg.width * sw, srh = rg.height * sh;
+  const m = ctx.getTransform();
+  const k = Math.hypot(m.a, m.b) || 1; // project px → device px
+  // The clip's colour adjustment (ctx.filter) must also apply inside the area,
+  // as in the export where eq= runs after the fixes.
+  const base = ctx.filter === 'none' ? '' : ctx.filter;
+  ctx.save();
+  if (rg.kind === 'blur') {
+    ctx.beginPath();
+    ctx.rect(rx, ry, rw, rh);
+    ctx.clip();
+    ctx.filter = `${base} blur(${blurSigma(rg.strength, w, h) * k}px)`.trim();
+    ctx.drawImage(src, 0, 0, w, h);
+  } else if (rg.kind === 'pixelate') {
+    const b = pixelBlock(rg.strength, w, h);
+    const c = scratchCanvas(Math.max(1, Math.round(rw / b)), Math.max(1, Math.round(rh / b)));
+    c.getContext('2d')!.drawImage(src, sx, sy, srw, srh, 0, 0, c.width, c.height);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(c, rx, ry, rw, rh);
+  } else {
+    removeArea(ctx, src, sw, sh, sx, sy, srw, srh, rx, ry, rw, rh, k);
+  }
+  ctx.restore();
+}
+
+/** Fills the area by blending its four border lines, weighted by distance. */
+function removeArea(
+  ctx: CanvasRenderingContext2D, src: CanvasImageSource, sw: number, sh: number,
+  sx: number, sy: number, srw: number, srh: number, rx: number, ry: number, rw: number, rh: number, k: number,
+) {
+  // Work at preview resolution (capped) with a 1px ring of real pixels.
+  const scale = Math.min(1, 320 / Math.max(rw * k, rh * k));
+  const iw = Math.max(2, Math.round(rw * k * scale)), ih = Math.max(2, Math.round(rh * k * scale));
+  const px = srw / iw, py = srh / ih; // source px per work px
+  const c = scratchCanvas(iw + 2, ih + 2);
+  const cx = c.getContext('2d', { willReadFrequently: true })!;
+  cx.drawImage(src, Math.max(0, sx - px), Math.max(0, sy - py), Math.min(sw, srw + 2 * px), Math.min(sh, srh + 2 * py), 0, 0, iw + 2, ih + 2);
+  let img: ImageData;
+  try {
+    img = cx.getImageData(0, 0, iw + 2, ih + 2);
+  } catch {
+    return; // canvas tainted (media served without CORS) — skip the preview
+  }
+  const d = img.data, W = iw + 2;
+  const at = (x: number, y: number) => (y * W + x) * 4;
+  for (let y = 1; y <= ih; y++) {
+    const L = at(0, y), R = at(iw + 1, y);
+    for (let x = 1; x <= iw; x++) {
+      const T = at(x, 0), B = at(x, ih + 1);
+      const wl = 1 / x, wr = 1 / (iw + 1 - x), wt = 1 / y, wb = 1 / (ih + 1 - y);
+      const sum = wl + wr + wt + wb;
+      const o = at(x, y);
+      for (let ch = 0; ch < 4; ch++) d[o + ch] = (d[L + ch] * wl + d[R + ch] * wr + d[T + ch] * wt + d[B + ch] * wb) / sum;
+    }
+  }
+  cx.putImageData(img, 0, 0);
+  ctx.drawImage(c, 1, 1, iw, ih, rx, ry, rw, rh);
 }
 
 /** Renders a text/shape clip to PNG (base64, no prefix) at its box size. */

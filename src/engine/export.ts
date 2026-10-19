@@ -39,6 +39,59 @@ export function needsRaster(c: Clip) {
   return c.type === 'text' || c.type === 'shape';
 }
 
+/**
+ * Appends filters applying a clip's area fixes to the scaled frame labelled
+ * `input` (clip-local time, w×h). Returns the label of the result.
+ */
+function regionFilters(clip: Clip, w: number, h: number, input: string, prefix: string, filters: string[]): string {
+  const regions = clip.regions ?? [];
+  if (!regions.length) return input;
+  // Source time = clip-local time + offset.
+  const offset = clip.type === 'video' ? clip.inPoint : 0;
+  let cur = input;
+  filters.push(`[${cur}]format=yuva444p[${prefix}f]`);
+  cur = `${prefix}f`;
+  regions.forEach((rg, i) => {
+    const from = Math.max(0, (rg.from ?? 0) - offset);
+    const to = rg.to === undefined ? clip.duration + 1 : rg.to - offset;
+    if (to <= 0 || from >= clip.duration) return;
+    const enable = `enable='between(t,${r(from)},${r(to)})'`;
+    const out = `${prefix}_${i}`;
+    let x = Math.round(rg.x * w), y = Math.round(rg.y * h);
+    let rw = Math.max(2, Math.round(rg.width * w)), rh = Math.max(2, Math.round(rg.height * h));
+    if (rg.kind === 'remove') {
+      // delogo needs a 1px border of real pixels to interpolate from.
+      x = Math.max(1, x); y = Math.max(1, y);
+      rw = Math.min(rw, w - 1 - x); rh = Math.min(rh, h - 1 - y);
+      if (rw < 2 || rh < 2) return;
+      filters.push(`[${cur}]delogo=x=${x}:y=${y}:w=${rw}:h=${rh}:${enable}[${out}]`);
+    } else {
+      rw = Math.min(rw, w - x); rh = Math.min(rh, h - y);
+      const fx = rg.kind === 'blur'
+        ? `gblur=sigma=${r(blurSigma(rg.strength, w, h))}`
+        : (() => {
+          const b = pixelBlock(rg.strength, w, h);
+          return `scale=${Math.max(1, Math.round(rw / b))}:${Math.max(1, Math.round(rh / b))}:flags=area,scale=${rw}:${rh}:flags=neighbor`;
+        })();
+      filters.push(`[${cur}]split[${out}a][${out}b]`);
+      filters.push(`[${out}b]crop=${rw}:${rh}:${x}:${y},${fx}[${out}c]`);
+      filters.push(`[${out}a][${out}c]overlay=x=${x}:y=${y}:${enable}[${out}]`);
+    }
+    cur = out;
+  });
+  return cur;
+}
+
+/** Blur sigma in clip pixels for strength 1..10, scaled to the clip size. */
+export function blurSigma(strength: number, w: number, h: number) {
+  return (strength * Math.min(w, h)) / 200;
+}
+
+/** Pixelate block size in clip pixels for strength 1..10. */
+export function pixelBlock(strength: number, w: number, h: number) {
+  return Math.max(2, (strength * Math.min(w, h)) / 100);
+}
+
 export function buildExportPlan(p: Project, opts: ExportOptions): ExportPlan {
   const duration = projectDuration(p);
   if (duration <= 0) throw new Error('The timeline is empty — add a clip before exporting');
@@ -80,7 +133,9 @@ export function buildExportPlan(p: Project, opts: ExportOptions): ExportPlan {
         const t = clip.transform;
         const w = Math.max(2, Math.round(t.width));
         const h = Math.max(2, Math.round(t.height));
-        const chain = [`fps=${fps}`, 'setpts=PTS-STARTPTS', `scale=${w}:${h}`];
+        filters.push(`[${idx}:v]fps=${fps},setpts=PTS-STARTPTS,scale=${w}:${h}[s${idx}]`);
+        const fixed = regionFilters(clip, w, h, `s${idx}`, `r${idx}`, filters);
+        const chain: string[] = [];
         if (hasColorAdjust(clip)) {
           chain.push(`eq=brightness=${r(clip.color.brightness)}:contrast=${r(clip.color.contrast)}:saturation=${r(clip.color.saturation)}`);
         }
@@ -94,7 +149,7 @@ export function buildExportPlan(p: Project, opts: ExportOptions): ExportPlan {
           chain.push(`rotate=${a}:ow=rotw(${a}):oh=roth(${a}):c=none`);
         }
         chain.push(`setpts=PTS+${r(clip.start)}/TB`);
-        filters.push(`[${idx}:v]${chain.join(',')}[v${idx}]`);
+        filters.push(`[${fixed}]${chain.join(',')}[v${idx}]`);
 
         // Position: keep the box centre fixed (rotation grows the frame), plus
         // slide offsets that match animationAt() in the preview.

@@ -7,6 +7,7 @@ import {
   type MediaAsset,
   type Project,
   type ProjectSettings,
+  type Region,
   type ShapeStyle,
   type TextStyle,
   type Track,
@@ -141,6 +142,21 @@ export function getMedia(p: Project, id?: string): MediaAsset | undefined {
 
 export function isActive(c: Clip, t: number): boolean {
   return t >= c.start && t < clipEnd(c);
+}
+
+/** Source-media time shown by a clip at timeline time t (clip-local for images). */
+export function sourceTime(c: Clip, t: number): number {
+  return t - c.start + (c.type === 'video' || c.type === 'audio' ? c.inPoint : 0);
+}
+
+/** Timeline time at which a clip shows source time s. */
+export function timelineTime(c: Clip, s: number): number {
+  return s + c.start - (c.type === 'video' || c.type === 'audio' ? c.inPoint : 0);
+}
+
+export function regionActiveAt(r: Region, c: Clip, t: number): boolean {
+  const s = sourceTime(c, t);
+  return (r.from === undefined || s >= r.from) && (r.to === undefined || s < r.to);
 }
 
 /** Visual clips visible at time t, bottom-most first. */

@@ -102,10 +102,18 @@ export function App() {
       const sel = s.selectedId ? findClip(s.project, s.selectedId) : undefined;
       if (e.key === ' ') { e.preventDefault(); s.setPlaying(!s.playing); }
       else if (e.key === 'Home') s.setTime(0);
-      else if ((e.key === 'Delete' || e.key === 'Backspace') && sel) s.dispatch({ type: 'deleteClip', clipId: sel.clip.id });
+      else if ((e.key === 'Delete' || e.key === 'Backspace') && sel) {
+        const rid = s.selectedRegionId;
+        if (rid && sel.clip.regions?.some((r) => r.id === rid)) {
+          s.dispatch({ type: 'deleteRegion', clipId: sel.clip.id, regionId: rid });
+          s.selectRegion(null);
+        } else {
+          s.dispatch({ type: 'deleteClip', clipId: sel.clip.id });
+        }
+      }
       else if (e.key.toLowerCase() === 's' && !mod && sel) s.dispatch({ type: 'splitClip', clipId: sel.clip.id, at: s.time });
       else if (mod && e.key.toLowerCase() === 'd' && sel) { e.preventDefault(); s.dispatch({ type: 'duplicateClip', clipId: sel.clip.id }); }
-      else if (e.key === 'Escape') s.select(null);
+      else if (e.key === 'Escape') { if (s.selectedRegionId) s.selectRegion(null); else s.select(null); }
       else if (e.key.startsWith('Arrow') && sel && sel.clip.type !== 'audio') {
         e.preventDefault();
         const step = e.shiftKey ? 10 : 1;

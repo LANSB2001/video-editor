@@ -18,6 +18,8 @@ import type {
   MediaAsset,
   Project,
   ProjectSettings,
+  Region,
+  RegionKind,
   ShapeStyle,
   TextStyle,
   Track,
@@ -42,6 +44,9 @@ export type EditCommand =
   | { type: 'deleteClip'; clipId: string }
   | { type: 'duplicateClip'; clipId: string }
   | { type: 'replaceMedia'; clipId: string; mediaId: string }
+  | { type: 'addRegion'; clipId: string; region: Partial<Region> & { kind: RegionKind } }
+  | { type: 'updateRegion'; clipId: string; regionId: string; patch: Partial<Omit<Region, 'id'>> }
+  | { type: 'deleteRegion'; clipId: string; regionId: string }
   | { type: 'addTrack'; kind: Track['kind']; name?: string; index?: number }
   | { type: 'updateTrack'; trackId: string; patch: Partial<Pick<Track, 'name' | 'hidden' | 'locked' | 'muted'>> }
   | { type: 'deleteTrack'; trackId: string }
@@ -262,10 +267,29 @@ export function applyCommand(p: Project, cmd: EditCommand): Project {
           duration: asset.kind === 'image' ? c.duration : Math.min(c.duration, asset.duration) || c.duration,
           transform,
           shape: undefined,
+          regions: undefined,
           placeholder: undefined,
         };
       });
     }
+
+    case 'addRegion': {
+      const { clip } = assertUnlocked(p, cmd.clipId);
+      if (clip.type !== 'video' && clip.type !== 'image') throw new CommandError('Area fixes work on video and image layers');
+      const region = clampRegion({ x: 0.4, y: 0.4, width: 0.2, height: 0.2, strength: 5, ...cmd.region, id: cmd.region.id ?? uid('rgn') });
+      return mapClip(p, cmd.clipId, (c) => ({ ...c, regions: [...(c.regions ?? []), region] }));
+    }
+
+    case 'updateRegion':
+      assertUnlocked(p, cmd.clipId);
+      return mapClip(p, cmd.clipId, (c) => {
+        if (!c.regions?.some((r) => r.id === cmd.regionId)) throw new CommandError('Area not found');
+        return { ...c, regions: c.regions.map((r) => (r.id === cmd.regionId ? clampRegion({ ...r, ...cmd.patch }) : r)) };
+      });
+
+    case 'deleteRegion':
+      assertUnlocked(p, cmd.clipId);
+      return mapClip(p, cmd.clipId, (c) => ({ ...c, regions: (c.regions ?? []).filter((r) => r.id !== cmd.regionId) }));
 
     case 'addTrack': {
       const track = createTrack(cmd.kind, cmd.name);
@@ -296,6 +320,24 @@ export function applyCommand(p: Project, cmd: EditCommand): Project {
     case 'rename':
       return { ...p, name: cmd.name };
   }
+}
+
+const MIN_REGION = 0.01;
+
+/** Keeps a region inside the clip frame with a sane size and time range. */
+export function clampRegion(r: Region): Region {
+  const width = Math.min(1, Math.max(MIN_REGION, r.width));
+  const height = Math.min(1, Math.max(MIN_REGION, r.height));
+  const out: Region = {
+    ...r,
+    width,
+    height,
+    x: Math.min(1 - width, Math.max(0, r.x)),
+    y: Math.min(1 - height, Math.max(0, r.y)),
+    strength: Math.min(10, Math.max(1, r.strength)),
+  };
+  if (out.from !== undefined && out.to !== undefined && out.to < out.from) [out.from, out.to] = [out.to, out.from];
+  return out;
 }
 
 export function applyCommands(p: Project, cmds: EditCommand[]): Project {

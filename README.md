@@ -14,6 +14,7 @@ A layer-based desktop video editor for Windows (also runs on macOS and Linux), w
 | **Layers** | Every element is its own layer · show/hide · lock · reorder (drag or ▲▼) · rename |
 | **Timeline** | Multiple video/image/text/shape layers and audio tracks · drag clips in time and between tracks · trim both ends · split at playhead (S) · duplicate · snapping to the playhead and clip edges · zoom |
 | **Elements** | Video, images/logos, audio, text (font, size, bold/italic, alignment, colour, highlight box), shapes (rectangle, rounded, circle, frame, line, lower bar) |
+| **Fix areas** | Draw a box on a video or image to **remove** a logo or watermark (filled in from the surrounding pixels), **blur** a face or number plate, or **pixelate** it. Boxes stick to the clip when it moves, can apply to the whole clip or a time range, and show live in the preview |
 | **Motion & colour** | In/out animations (fade, slide up/down/left/right) · brightness/contrast/saturation · opacity · volume |
 | **Templates** | Product Launch, Mobile App Promo, Instagram Reel (9:16), YouTube Intro, Property Showcase. All of them are editable layers, and their ＋ slots take your own media via *Replace media* |
 | **AI assistant** | Type edits like *"move the logo to the top right"*, *"make the heading gold"* or *"make the video black and white"*. With a Claude API key it understands free-form requests; without one, an offline parser handles common commands. Every AI edit can be undone |
@@ -84,6 +85,7 @@ Key design decisions:
 
 ## Roadmap
 
+0. ✅ **Fix areas** (remove / blur / pixelate a rectangle over a time range), done.
 1. **AI object selection** (click an object in footage to get a tracked mask). Planned with SAM 2 (Apache-2.0), which turns a flattened MP4 object into a real layer.
 2. **Object removal / background fill**, using video inpainting. Check model licences: ProPainter, for example, is non-commercial.
 3. Background removal for people, auto-captions (speech-to-text), keyframe animation, transitions between clips, more templates, a GPU preview pipeline (WebCodecs / native decoder) for 4K timelines.

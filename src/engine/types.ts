@@ -71,6 +71,28 @@ export interface Animation {
   duration: number;
 }
 
+export type RegionKind = 'remove' | 'blur' | 'pixelate';
+
+/**
+ * A rectangular fix applied to a video/image clip's pixels: remove an object
+ * (fill from the surrounding pixels), blur it, or pixelate it.
+ * The box is in normalised clip coordinates (0..1 of the clip's frame), so it
+ * stays on the object when the clip is moved or resized.
+ */
+export interface Region {
+  id: string;
+  kind: RegionKind;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Source-media seconds, so trimming/splitting the clip doesn't shift it. Undefined = whole clip. */
+  from?: number;
+  to?: number;
+  /** 1..10 — blur radius / pixel block size. Ignored for 'remove'. */
+  strength: number;
+}
+
 export interface Clip {
   id: string;
   type: ClipType;
@@ -89,6 +111,8 @@ export interface Clip {
   animation: Animation;
   /** 0..2 */
   volume: number;
+  /** Area fixes (video and image clips). */
+  regions?: Region[];
   /** Template placeholder hint, e.g. "Drop your product video here". */
   placeholder?: string;
 }

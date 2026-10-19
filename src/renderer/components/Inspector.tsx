@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
-  ASPECT_PRESETS, findClip, getMedia, type AnimationKind, type Clip, type EditCommand, type Track,
+  ASPECT_PRESETS, findClip, getMedia, sourceTime, timelineTime,
+  type AnimationKind, type Clip, type EditCommand, type Region, type RegionKind, type Track,
 } from '../../engine';
 import { useEditor } from '../store';
 import { CLIP_COLORS } from '../util';
@@ -302,6 +303,8 @@ function ClipProperties({ clip, locked }: { clip: Clip; locked: boolean }) {
           </div>
         )}
 
+        {(clip.type === 'video' || clip.type === 'image') && <RegionsGroup clip={clip} />}
+
         {(clip.type === 'video' || clip.type === 'image') && (
           <div className="group">
             <h4>Colour</h4>
@@ -325,5 +328,79 @@ function ClipProperties({ clip, locked }: { clip: Clip; locked: boolean }) {
         </div>
       </fieldset>
     </section>
+  );
+}
+
+const REGION_KINDS: { id: RegionKind; label: string; hint: string }[] = [
+  { id: 'remove', label: 'Remove', hint: 'Fill the area from the pixels around it — best for logos, watermarks and small objects on simple backgrounds' },
+  { id: 'blur', label: 'Blur', hint: 'Blur faces, number plates or private details' },
+  { id: 'pixelate', label: 'Pixelate', hint: 'Cover the area with large pixel blocks' },
+];
+
+/** "Fix areas": remove / blur / pixelate rectangles on a video or image layer. */
+function RegionsGroup({ clip }: { clip: Clip }) {
+  const selectedRegionId = useEditor((s) => s.selectedRegionId);
+  const time = useEditor((s) => s.time);
+  const { dispatch, beginGesture, selectRegion } = useEditor.getState();
+  const regions = clip.regions ?? [];
+  const update = (r: Region, patch: Partial<Region>, merge = false) =>
+    dispatch({ type: 'updateRegion', clipId: clip.id, regionId: r.id, patch }, { merge });
+
+  function add(kind: RegionKind) {
+    const id = `rgn_${Date.now().toString(36)}`;
+    if (dispatch({ type: 'addRegion', clipId: clip.id, region: { id, kind } })) selectRegion(id);
+  }
+
+  // Times are stored in source seconds; show them in timeline seconds.
+  const toTimeline = (s: number) => timelineTime(clip, s);
+  const playheadSource = Math.min(Math.max(sourceTime(clip, time), sourceTime(clip, clip.start)), sourceTime(clip, clip.start + clip.duration));
+
+  return (
+    <div className="group">
+      <h4>Fix areas</h4>
+      <p className="hint">Hide a logo, watermark, face or number plate. Add an area, then drag its box on the canvas over the thing to fix.</p>
+      <div className="region-add">
+        {REGION_KINDS.map((k) => (
+          <button key={k.id} className="tiny" title={k.hint} onClick={() => add(k.id)}>＋ {k.label}</button>
+        ))}
+      </div>
+      {regions.map((r) => {
+        const whole = r.from === undefined && r.to === undefined;
+        return (
+          <div key={r.id} className={`region-row ${r.id === selectedRegionId ? 'sel' : ''}`} onClick={() => selectRegion(r.id)}>
+            <div className="row">
+              <select value={r.kind} onChange={(e) => update(r, { kind: e.target.value as RegionKind })}>
+                {REGION_KINDS.map((k) => <option key={k.id} value={k.id}>{k.label}</option>)}
+              </select>
+              <label className="check">
+                <input type="checkbox" checked={whole} onChange={(e) => update(r, e.target.checked
+                  ? { from: undefined, to: undefined }
+                  : { from: playheadSource, to: Math.min(playheadSource + 2, sourceTime(clip, clip.start + clip.duration)) })} />
+                Whole clip
+              </label>
+              <button className="icon tiny" title="Delete area" onClick={(e) => { e.stopPropagation(); dispatch({ type: 'deleteRegion', clipId: clip.id, regionId: r.id }); }}>✕</button>
+            </div>
+            {r.kind !== 'remove' && (
+              <Slider label="Strength" value={r.strength} min={1} max={10} step={1} onChange={(v) => update(r, { strength: v }, true)} />
+            )}
+            {!whole && (
+              <div className="row">
+                <Num label="From" value={toTimeline(r.from ?? 0)} step={0.1} suffix="s" onChange={(v) => update(r, { from: sourceTime(clip, v) }, true)} />
+                <Num label="To" value={toTimeline(r.to ?? sourceTime(clip, clip.start + clip.duration))} step={0.1} suffix="s" onChange={(v) => update(r, { to: sourceTime(clip, v) }, true)} />
+              </div>
+            )}
+            {!whole && (
+              <div className="row small-actions">
+                <button className="tiny" onClick={() => { beginGesture(); update(r, { from: playheadSource }); }}>Start here</button>
+                <button className="tiny" onClick={() => { beginGesture(); update(r, { to: playheadSource }); }}>End here</button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {regions.some((r) => r.kind === 'remove') && (
+        <p className="hint">Remove works best on small, still objects over simple backgrounds. AI removal for moving objects is coming next.</p>
+      )}
+    </div>
   );
 }

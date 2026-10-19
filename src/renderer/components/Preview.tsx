@@ -1,11 +1,23 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { findClip, projectDuration, visibleClipsAt, type Clip, type Transform } from '../../engine';
+import { findClip, projectDuration, regionActiveAt, visibleClipsAt, type Clip, type Region, type Transform } from '../../engine';
 import { mediaPool } from '../mediaPool';
 import { drawFrame, hitTest } from '../render';
 import { useEditor } from '../store';
 import { formatTime } from '../util';
 
 type Handle = 'move' | 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w' | 'rotate';
+
+type RegionHandle = 'move' | 'nw' | 'ne' | 'sw' | 'se';
+
+interface RegionDrag {
+  clipId: string;
+  regionId: string;
+  handle: RegionHandle;
+  startX: number;
+  startY: number;
+  orig: Region;
+  box: Transform;
+}
 
 interface Drag {
   handle: Handle;
@@ -17,6 +29,8 @@ interface Drag {
 }
 
 const SNAP = 8; // screen px
+
+export const REGION_LABEL: Record<Region['kind'], string> = { remove: 'Remove', blur: 'Blur', pixelate: 'Pixelate' };
 
 export function Preview() {
   const project = useEditor((s) => s.project);
@@ -30,6 +44,8 @@ export function Preview() {
   const [scale, setScale] = useState(0.4);
   const [guides, setGuides] = useState<{ v?: number; h?: number }>({});
   const drag = useRef<Drag | null>(null);
+  const regionDrag = useRef<RegionDrag | null>(null);
+  const selectedRegionId = useEditor((s) => s.selectedRegionId);
   const { width: W, height: H } = project.settings;
 
   // Fit the canvas into the available area.
@@ -103,6 +119,24 @@ export function Preview() {
   function onPointerDown(e: React.PointerEvent) {
     if (e.button !== 0) return;
     const pt = toProject(e);
+    const regionEl = (e.target as HTMLElement).closest<HTMLElement>('[data-region]');
+    if (regionEl && selClip && !selected!.track.locked) {
+      const region = selClip.regions?.find((r) => r.id === regionEl.dataset.region);
+      if (!region) return;
+      useEditor.getState().selectRegion(region.id);
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      beginGesture();
+      regionDrag.current = {
+        clipId: selClip.id,
+        regionId: region.id,
+        handle: ((e.target as HTMLElement).dataset.rhandle as RegionHandle) ?? 'move',
+        startX: pt.x,
+        startY: pt.y,
+        orig: { ...region },
+        box: { ...selClip.transform },
+      };
+      return;
+    }
     const handle = (e.target as HTMLElement).dataset.handle as Handle | undefined;
     let clip: Clip | undefined;
     if (handle && selClip) {
@@ -128,6 +162,29 @@ export function Preview() {
   }
 
   function onPointerMove(e: React.PointerEvent) {
+    const rd = regionDrag.current;
+    if (rd) {
+      // Pointer delta in the clip's own (unrotated) frame, as a fraction of its size.
+      const pt = toProject(e);
+      const a = (rd.box.rotation * Math.PI) / 180;
+      const dx = pt.x - rd.startX, dy = pt.y - rd.startY;
+      const nx = (dx * Math.cos(a) + dy * Math.sin(a)) / rd.box.width;
+      const ny = (-dx * Math.sin(a) + dy * Math.cos(a)) / rd.box.height;
+      const o = rd.orig;
+      let patch: Partial<Region>;
+      if (rd.handle === 'move') patch = { x: o.x + nx, y: o.y + ny };
+      else {
+        const west = rd.handle.includes('w'), north = rd.handle.includes('n');
+        patch = {
+          x: west ? Math.min(o.x + nx, o.x + o.width - 0.01) : o.x,
+          width: west ? o.width - nx : o.width + nx,
+          y: north ? Math.min(o.y + ny, o.y + o.height - 0.01) : o.y,
+          height: north ? o.height - ny : o.height + ny,
+        };
+      }
+      dispatch({ type: 'updateRegion', clipId: rd.clipId, regionId: rd.regionId, patch }, { merge: true });
+      return;
+    }
     const d = drag.current;
     if (!d) return;
     const pt = toProject(e);
@@ -179,6 +236,7 @@ export function Preview() {
 
   function onPointerUp() {
     drag.current = null;
+    regionDrag.current = null;
     setGuides({});
   }
 
@@ -210,6 +268,21 @@ export function Preview() {
                 transform: `rotate(${t.rotation}deg)`,
               }}
             >
+              {selClip.regions?.map((rg) => (
+                <div
+                  key={rg.id}
+                  className={`region ${rg.kind} ${rg.id === selectedRegionId ? 'sel' : ''} ${regionActiveAt(rg, selClip, time) ? '' : 'inactive'}`}
+                  style={{ left: `${rg.x * 100}%`, top: `${rg.y * 100}%`, width: `${rg.width * 100}%`, height: `${rg.height * 100}%` }}
+                  data-region={rg.id}
+                  data-rhandle="move"
+                  title={`${REGION_LABEL[rg.kind]} — drag to move, corners to resize`}
+                >
+                  <span className="region-label">{REGION_LABEL[rg.kind]}</span>
+                  {!selected!.track.locked && (['nw', 'ne', 'sw', 'se'] as const).map((h) => (
+                    <div key={h} className={`rhandle ${h}`} data-region={rg.id} data-rhandle={h} />
+                  ))}
+                </div>
+              ))}
               {!selected!.track.locked && (
                 <>
                   {(['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const).map((h) => (

@@ -52,6 +52,9 @@ const MIME: Record<string, string> = {
   '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.ogg': 'audio/ogg', '.flac': 'audio/flac',
 };
 
+// Lets the preview read pixels back from media (needed for area fixes).
+const CORS = { 'Access-Control-Allow-Origin': '*' };
+
 /**
  * Handler for media://local/<encoded path>. Serves local files with HTTP Range
  * support, which <video> needs for seeking.
@@ -76,9 +79,9 @@ export async function serveMedia(request: Request): Promise<Response> {
     const body = Readable.toWeb(createReadStream(file, { start, end })) as ReadableStream;
     return new Response(body, {
       status: 206,
-      headers: { 'Content-Type': type, 'Content-Length': String(end - start + 1), 'Content-Range': `bytes ${start}-${end}/${stat.size}`, 'Accept-Ranges': 'bytes' },
+      headers: { 'Content-Type': type, 'Content-Length': String(end - start + 1), 'Content-Range': `bytes ${start}-${end}/${stat.size}`, 'Accept-Ranges': 'bytes', ...CORS },
     });
   }
   const body = Readable.toWeb(createReadStream(file)) as ReadableStream;
-  return new Response(body, { headers: { 'Content-Type': type, 'Content-Length': String(stat.size), 'Accept-Ranges': 'bytes' } });
+  return new Response(body, { headers: { 'Content-Type': type, 'Content-Length': String(stat.size), 'Accept-Ranges': 'bytes', ...CORS } });
 }

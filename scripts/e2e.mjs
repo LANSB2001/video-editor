@@ -101,6 +101,51 @@ if (aiErrors) throw new Error(`AI assistant failed ${aiErrors} request(s): ${awa
 const lastReply = await page.locator('.ai-msg.assistant').last().textContent();
 if (!/black and white/.test(lastReply)) throw new Error(`unexpected AI reply: ${lastReply}`);
 
+step('fix areas: blur and remove on the video');
+await page.locator('.clip').filter({ hasText: 'sample.mp4' }).click({ position: { x: 60, y: 10 } });
+await page.click('.region-add >> text=Blur');
+const region = page.locator('.region').first();
+await region.waitFor();
+const rb = await region.boundingBox();
+await page.mouse.move(rb.x + rb.width / 2, rb.y + rb.height / 2);
+await page.mouse.down();
+await page.mouse.move(rb.x + rb.width / 2 - 200, rb.y + rb.height / 2 - 80, { steps: 6 });
+await page.mouse.up();
+const rb2 = await region.boundingBox();
+if (Math.abs(rb2.x - (rb.x - 200)) > 4) throw new Error(`area did not move (${rb.x} → ${rb2.x})`);
+await page.click('.region-add >> text=Remove');
+if ((await page.locator('.region').count()) !== 2) throw new Error('expected 2 areas');
+// The preview must be able to read video pixels (needed for Remove).
+await page.click('.sidebar-tabs >> text=Media');
+const readable = await page.evaluate(async () => {
+  const src = document.querySelector('.media-item video')?.getAttribute('src')?.replace(/#.*$/, '');
+  if (!src) return 'no video';
+  const v = document.createElement('video');
+  v.crossOrigin = 'anonymous';
+  v.muted = true;
+  v.src = src;
+  await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = () => rej(new Error('load failed')); });
+  const c = document.createElement('canvas');
+  c.width = 8; c.height = 8;
+  const cx = c.getContext('2d');
+  cx.drawImage(v, 0, 0, 8, 8);
+  try { cx.getImageData(0, 0, 1, 1); return 'ok'; } catch (e) { return String(e); }
+});
+if (readable !== 'ok') throw new Error(`preview cannot read video pixels: ${readable}`);
+await page.waitForTimeout(300);
+// Inside each area the preview must still honour the clip's black & white grade.
+for (const i of [0, 1]) {
+  const b = await page.locator('.region').nth(i).boundingBox();
+  const px = await page.evaluate(({ x, y }) => {
+    const c = document.querySelector('.canvas-wrap canvas');
+    const r = c.getBoundingClientRect();
+    const k = c.width / r.width;
+    return [...c.getContext('2d').getImageData(Math.round((x - r.left) * k), Math.round((y - r.top) * k), 1, 1).data];
+  }, { x: b.x + b.width * 0.3, y: b.y + b.height * 0.5 });
+  if (Math.max(px[0], px[1], px[2]) - Math.min(px[0], px[1], px[2]) > 25) throw new Error(`area ${i} preview is not black & white: ${px}`);
+}
+await shot(page, '03b-areas');
+
 step('seek and screenshot');
 await page.keyboard.press('Escape');
 await page.locator('.ruler').click({ position: { x: 170 + 80 * 2, y: 10 } });

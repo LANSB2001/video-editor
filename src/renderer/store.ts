@@ -22,6 +22,8 @@ interface EditorState {
   filePath: string | null;
   dirty: boolean;
   selectedId: string | null;
+  /** Selected area fix on the selected clip. */
+  selectedRegionId: string | null;
   time: number;
   playing: boolean;
   zoom: number; // timeline pixels per second
@@ -38,6 +40,7 @@ interface EditorState {
   load: (project: Project, filePath?: string | null) => void;
   markSaved: (filePath: string) => void;
   select: (id: string | null) => void;
+  selectRegion: (id: string | null) => void;
   setTime: (t: number) => void;
   setPlaying: (p: boolean) => void;
   setZoom: (z: number) => void;
@@ -53,6 +56,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   filePath: null,
   dirty: false,
   selectedId: null,
+  selectedRegionId: null,
   time: 0,
   playing: false,
   zoom: 80,
@@ -102,11 +106,12 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   load: (project, filePath = null) => {
     history.clear();
-    set({ project, filePath, dirty: false, selectedId: null, time: 0, playing: false, canUndo: false, canRedo: false });
+    set({ project, filePath, dirty: false, selectedId: null, selectedRegionId: null, time: 0, playing: false, canUndo: false, canRedo: false });
   },
 
   markSaved: (filePath) => set({ filePath, dirty: false }),
-  select: (id) => set({ selectedId: id }),
+  select: (id) => set(id === get().selectedId ? { selectedId: id } : { selectedId: id, selectedRegionId: null }),
+  selectRegion: (selectedRegionId) => set({ selectedRegionId }),
   setTime: (t) => set({ time: Math.max(0, t) }),
   setPlaying: (playing) => set({ playing }),
   setZoom: (zoom) => set({ zoom: Math.min(400, Math.max(10, zoom)) }),
